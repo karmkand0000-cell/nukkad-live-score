@@ -1023,6 +1023,15 @@ if(IS_CONTROL){
 } else {
   document.body.className = 'overlay';
   buildScene();
+  // auto-fit: full 16:9 frame in any window (OBS at 1920x1080 stays at scale 1)
+  const fitView = () => {
+    const k = Math.min(innerWidth/1920, innerHeight/1080);
+    document.documentElement.style.overflow = 'hidden';
+    document.documentElement.style.background = k < 0.999 ? '#000' : 'transparent';
+    document.body.style.transformOrigin = '0 0';
+    document.body.style.transform = k < 0.999 ? `translate(${((innerWidth-1920*k)/2).toFixed(1)}px,${((innerHeight-1080*k)/2).toFixed(1)}px) scale(${k})` : '';
+  };
+  fitView(); window.addEventListener('resize', fitView);
   document.body.insertAdjacentHTML('beforeend', '<div id="ov"></div>');
   renderOverlay(); sceneSync(S);
   // safety net: poll storage every second (in case events are missed)

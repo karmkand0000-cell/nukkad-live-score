@@ -203,7 +203,7 @@ function load(){
   catch(e){ return null; }
 }
 function save(){
-  S.updated = Date.now();
+  S.updated = Math.max(Date.now(), (S.updated||0) + 1);
   try{ localStorage.setItem(KEY, JSON.stringify(S)); }catch(e){}
   if(bc) try{ bc.postMessage(S); }catch(e){}
   render();

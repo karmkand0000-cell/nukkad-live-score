@@ -435,6 +435,7 @@ function sndApply(s){
   }
 }
 function sndSync(s){
+  if(SND.ctx && SND.ctx.state === 'running' && !SND.roar && !SND.building){ SND.building = true; setTimeout(() => { SND.building = false; if(!SND.roar) sndBuild(); }, 1500); }
   sndApply(s);
   const chip = document.getElementById('sndchip');
   if(chip) chip.style.display = (!IN_FRAME && s.sound !== false && !(SND.ctx && SND.ctx.state === 'running')) ? '' : 'none';

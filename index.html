@@ -51,6 +51,7 @@ body.overlay{width:1920px;height:1080px;overflow:hidden;color:var(--txt);
 .livetag{position:absolute;left:80px;bottom:228px;background:var(--brand);color:#fff;font-size:22px;font-weight:800;letter-spacing:2px;
   padding:3px 14px;border-radius:6px 6px 0 0;display:flex;gap:8px;align-items:center}
 .livetag i{width:10px;height:10px;border-radius:50%;background:#fff;animation:blink 1s infinite}
+.sndchip{position:absolute;left:50%;top:40px;transform:translateX(-50%);z-index:50;background:#FF3131;color:#fff;font-size:26px;font-weight:800;padding:10px 26px;border-radius:30px;box-shadow:0 6px 24px rgba(0,0,0,.5);cursor:pointer;animation:blink 1.4s infinite}
 .illus{position:absolute;right:80px;top:56px;background:rgba(0,0,0,.45);color:#fff;font-size:20px;font-weight:600;letter-spacing:1px;padding:6px 14px;border-radius:6px}
 /* ===================== CARTOON SCENE ===================== */
 #scene{position:absolute;left:0;top:0;width:1920px;height:1080px;overflow:hidden}
@@ -187,7 +188,7 @@ const DEFAULT = () => ({
   bowler:{ name:'Bowler', balls:0, r:0, w:0 }, bowlers:{},
   recent:[], first:null, lastEvent:null,
   needBatter:-1, needBowler:false,
-  view:'bar', banner:'', status:'', apiStatus:'', scene:true, ballId:0, lastTok:'',
+  view:'bar', banner:'', status:'', apiStatus:'', scene:true, ballId:0, lastTok:'', sound:true, ambience:false, volume:80, sndTest:0,
   logo:'https://yt3.googleusercontent.com/gURqZpoH4BTJh-_8CUTLuSArs1E5QCBcJpsUa2yNru_UY2aS8o2n12KmLgBa9p8eVCfC1hc-Wg=s400-c-k-c0x00ffffff-no-rj',
   ticker:'Watch the full match live score only on Nukkad Live Adda  •  Like, Share & Subscribe  •  Comment your prediction below',
   api:{ key:'', match:'', mode:'hybrid', limit:100, reserve:10, hours:8.5, auto:false,
@@ -328,6 +329,91 @@ function renderOverlay(){
 }
 
 /* =========================================================================
+   SOUND (overlay only) — all sounds are synthesised in the browser (Web Audio),
+   no audio files, so nothing is copyrighted. Bat crack, crowd roar, stumps.
+   Browsers block sound until one click on the page, hence the red chip.
+   ========================================================================= */
+const IN_FRAME = window.top !== window.self;   // control-panel preview iframe stays silent
+const SND = { ctx:null, master:null, noise:null, amb:null, ambG:null, testSeen:null };
+function sndInit(){
+  if(SND.ctx) return SND.ctx;
+  const AC = window.AudioContext || window.webkitAudioContext; if(!AC) return null;
+  const ctx = SND.ctx = new AC();
+  SND.master = ctx.createGain(); SND.master.connect(ctx.destination);
+  const len = ctx.sampleRate*2, buf = ctx.createBuffer(1, len, ctx.sampleRate), d = buf.getChannelData(0);
+  for(let i=0;i<len;i++) d[i] = Math.random()*2-1;
+  SND.noise = buf; sndApply(S); return ctx;
+}
+function sndReady(){ return !IN_FRAME && S.sound !== false && SND.ctx && SND.ctx.state === 'running'; }
+function nSrc(){ const n = SND.ctx.createBufferSource(); n.buffer = SND.noise; n.loop = true; n.loopStart = Math.random(); return n; }
+function env(g, t, a, peak, hold, rel){ g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(peak, t+a);
+  g.gain.setValueAtTime(peak, t+a+hold); g.gain.exponentialRampToValueAtTime(0.0001, t+a+hold+rel); }
+function batCrack(vol){
+  const c = SND.ctx, t = c.currentTime;
+  const n = nSrc(), bp = c.createBiquadFilter(), g = c.createGain();
+  bp.type = 'bandpass'; bp.frequency.value = 2400; bp.Q.value = 1.4;
+  n.connect(bp); bp.connect(g); g.connect(SND.master); env(g, t, 0.002, 0.9*vol, 0.01, 0.07); n.start(t); n.stop(t+0.12);
+  const o = c.createOscillator(), og = c.createGain(); o.type = 'triangle';
+  o.frequency.setValueAtTime(1100, t); o.frequency.exponentialRampToValueAtTime(380, t+0.06);
+  o.connect(og); og.connect(SND.master); env(og, t, 0.002, 0.6*vol, 0.005, 0.08); o.start(t); o.stop(t+0.12);
+}
+function crowd(dur, peak){
+  const c = SND.ctx, t = c.currentTime + 0.05;
+  [[700,0.5,1],[1500,0.8,0.55],[320,0.7,0.6]].forEach(([f,q,k]) => {
+    const n = nSrc(), bp = c.createBiquadFilter(), g = c.createGain();
+    bp.type = 'bandpass'; bp.frequency.value = f; bp.Q.value = q;
+    n.connect(bp); bp.connect(g); g.connect(SND.master);
+    env(g, t, 0.35, peak*k, dur*0.45, dur*0.55); n.start(t); n.stop(t+dur+0.3);
+  });
+  const whoops = Math.round(peak*6);                       // a few "whoo" whistles
+  for(let i=0;i<whoops;i++){
+    const o = c.createOscillator(), g = c.createGain(), st = t + 0.2 + Math.random()*dur*0.5, f = 1300 + Math.random()*900;
+    o.type = 'sine'; o.frequency.setValueAtTime(f*0.8, st); o.frequency.linearRampToValueAtTime(f, st+0.25); o.frequency.linearRampToValueAtTime(f*0.9, st+0.7);
+    o.connect(g); g.connect(SND.master); env(g, st, 0.08, 0.05*peak, 0.3, 0.35); o.start(st); o.stop(st+0.9);
+  }
+}
+function stumpsHit(vol){
+  const c = SND.ctx, t = c.currentTime;
+  [0, 0.05, 0.11, 0.2].forEach((dt, i) => {
+    const n = nSrc(), bp = c.createBiquadFilter(), g = c.createGain();
+    bp.type = 'bandpass'; bp.frequency.value = [1400, 900, 1700, 1100][i]; bp.Q.value = 9;
+    n.connect(bp); bp.connect(g); g.connect(SND.master); env(g, t+dt, 0.002, (i?0.7:1.1)*vol, 0.01, 0.12); n.start(t+dt); n.stop(t+dt+0.2);
+  });
+  const o = c.createOscillator(), g = c.createGain(); o.type = 'sine';
+  o.frequency.setValueAtTime(160, t); o.frequency.exponentialRampToValueAtTime(70, t+0.25);
+  o.connect(g); g.connect(SND.master); env(g, t, 0.004, 0.5*vol, 0.02, 0.25); o.start(t); o.stop(t+0.35);
+}
+function sfx(o){
+  if(!sndReady()) return;
+  if(o === 'six'){ batCrack(1.2); crowd(4.2, 0.9); }
+  else if(o === 'four'){ batCrack(1); crowd(3.2, 0.7); }
+  else if(o === 'wicket'){ stumpsHit(1); setTimeout(() => sndReady() && crowd(3.6, 0.85), 180); }
+  else if(o === 'run'){ batCrack(0.8); crowd(1.6, 0.25); }
+  else if(o === 'dot'){ batCrack(0.55); }
+}
+function sndApply(s){
+  if(!SND.ctx) return;
+  SND.master.gain.value = Math.max(0, Math.min(1, (s.volume ?? 80)/100));
+  const want = !IN_FRAME && s.sound !== false && !!s.ambience;
+  if(want && !SND.amb){
+    const c = SND.ctx, n = nSrc(), bp = c.createBiquadFilter(), g = c.createGain();
+    bp.type = 'bandpass'; bp.frequency.value = 500; bp.Q.value = 0.4; g.gain.value = 0.0001;
+    n.connect(bp); bp.connect(g); g.connect(SND.master); n.start(); g.gain.linearRampToValueAtTime(0.06, c.currentTime + 1.5);
+    SND.amb = n; SND.ambG = g;
+  } else if(!want && SND.amb){
+    const c = SND.ctx, n = SND.amb; SND.ambG.gain.linearRampToValueAtTime(0.0001, c.currentTime + 0.6); n.stop(c.currentTime + 0.7); SND.amb = null;
+  }
+}
+function sndSync(s){
+  sndApply(s);
+  const chip = document.getElementById('sndchip');
+  if(chip) chip.style.display = (!IN_FRAME && s.sound !== false && !(SND.ctx && SND.ctx.state === 'running')) ? '' : 'none';
+  if(SND.testSeen === null){ SND.testSeen = s.sndTest||0; return; }
+  if((s.sndTest||0) > SND.testSeen){ SND.testSeen = s.sndTest; sfx('four'); }
+}
+function sndUnlock(){ const c = sndInit(); if(c && c.state !== 'running') c.resume().then(() => sndSync(S)); else sndSync(S); }
+
+/* =========================================================================
    CARTOON MATCH SCENE (overlay only) — original cartoon players.
    Plays one delivery at a time. A real ball entered in the control panel
    plays its own outcome (4, 6, W, runs, wide); otherwise players keep
@@ -446,9 +532,10 @@ function outcomeOf(tok){
 function sceneSync(s){
   if(!SC) return;
   SC.host.style.display = s.scene ? '' : 'none';
+  sndSync(s);
   sceneColours();
   if(SC.seen === null){ SC.seen = s.ballId||0; return; }         // don't replay old balls on load
-  if((s.ballId||0) > SC.seen){ SC.q.push(outcomeOf(s.lastTok)); SC.seen = s.ballId; if(SC.q.length > 3) SC.q = SC.q.slice(-3); }
+  if((s.ballId||0) > SC.seen){ if(!s.scene) sfx(outcomeOf(s.lastTok)); SC.q.push(outcomeOf(s.lastTok)); SC.seen = s.ballId; if(SC.q.length > 3) SC.q = SC.q.slice(-3); }
   else if((s.ballId||0) < SC.seen) SC.seen = s.ballId||0;        // undo
 }
 const tf = (el, x, y, sx=1, sy=sx, rot=0) => el && el.setAttribute('transform', `translate(${x.toFixed(1)},${y.toFixed(1)}) scale(${sx},${sy})${rot?` rotate(${rot.toFixed(1)})`:''}`);
@@ -473,7 +560,7 @@ function sceneTick(now){
   requestAnimationFrame(sceneTick);
   if(!SC || !S.scene) return;
   if(SC.cheerT && now > SC.cheerT){ SC.crowd.classList.remove('cheer'); SC.cheerT = 0; }
-  if(!SC.cur){ SC.cur = SC.q.shift() || 'dot'; SC.t0 = now; SC.fx = false; }
+  if(!SC.cur){ const nx = SC.q.shift(); SC.cur = nx || 'dot'; SC.real = !!nx; SC.t0 = now; SC.fx = false; SC.sfx = false; }
   let t = (now - SC.t0)/1000;
   // a real ball waiting? cut the walk-back short
   if(t > T_END + 0.6 && SC.q.length && t < T_ALL) { SC.t0 = now - T_ALL*1000; t = T_ALL; }
@@ -537,6 +624,7 @@ function sceneTick(now){
     tf(SC.bails, 30*w, -160*Math.sin(Math.PI*w*0.9), 1, 1, 400*w);
     rot(SC.st0, -14*clamp(w*3), 3, 0); rot(SC.st2, 16*clamp(w*3), 23, 0);
   } else if(t < 0.1){ SC.bails.removeAttribute('transform'); SC.st0.removeAttribute('transform'); SC.st2.removeAttribute('transform'); }
+  if(!SC.sfx && SC.real && t > (o === 'wicket' ? T_HIT + OUT*0.33 : T_HIT)){ SC.sfx = true; sfx(o); }
   if(!SC.fx && t > T_HIT + 0.15){
     SC.fx = true;
     if(o === 'six'){ cheer(2600); confetti(); }
@@ -795,6 +883,11 @@ function buildControl(){
           <button id="bScene">Cartoon match: ON</button>
         </div>
         <div class="row" style="margin-top:8px">
+          <button id="bSound">Sound: ON</button><button id="bAmb">Crowd background: OFF</button>
+          <label>Volume<input id="vol" type="range" min="0" max="100" step="5"></label>
+          <button id="bSndTest">Test sound</button>
+        </div>
+        <div class="row" style="margin-top:8px">
           <label>Banner<select id="banner">
             <option value="">— none —</option><option>Innings Break</option><option>Drinks Break</option><option>Strategic Timeout</option>
             <option>Rain Delay</option><option>Lunch</option><option>Tea</option><option>Stumps</option><option>Toss Update</option><option>Match Starts Soon</option>
@@ -914,6 +1007,10 @@ function buildControl(){
   $('#batSel').onchange = e => { S.bat = +e.target.value; save(); };
   $('#logoUrl').onchange = e => { S.logo = e.target.value.trim(); save(); };
   $('#bScene').onclick = () => { S.scene = !S.scene; save(); fill(); };
+  $('#bSound').onclick = () => { S.sound = S.sound === false; save(); fill(); };
+  $('#bAmb').onclick = () => { S.ambience = !S.ambience; save(); fill(); };
+  $('#vol').oninput = e => { S.volume = +e.target.value; save(); };
+  $('#bSndTest').onclick = () => { S.sndTest = Date.now(); save(); flash('Test sound sent to overlay'); };
   $('#innNo').onchange = e => { S.innings = Math.max(1, +e.target.value||1); save(); };
 
   // api
@@ -1004,6 +1101,9 @@ function fill(force){
   const bs = $('#batSel'); bs.options[0].text = s.teams[0].name; bs.options[1].text = s.teams[1].name; set('#batSel', String(s.bat));
   set('#innNo', s.innings); set('#logoUrl', s.logo||'');
   const bsc = $('#bScene'); bsc.textContent = 'Cartoon match: ' + (s.scene ? 'ON' : 'OFF'); bsc.classList.toggle('on', !!s.scene);
+  const bso = $('#bSound'); bso.textContent = 'Sound: ' + (s.sound !== false ? 'ON' : 'OFF'); bso.classList.toggle('on', s.sound !== false);
+  const bam = $('#bAmb'); bam.textContent = 'Crowd background: ' + (s.ambience ? 'ON' : 'OFF'); bam.classList.toggle('on', !!s.ambience);
+  if(document.activeElement !== $('#vol')) $('#vol').value = s.volume ?? 80;
   set('#apiKey', s.api.key); set('#apiMatch', s.api.match); set('#apiMode', s.api.mode);
   set('#apiLimit', s.api.limit); set('#apiReserve', s.api.reserve); set('#apiHours', s.api.hours);
   const ba = $('#bAuto'); ba.textContent = 'Auto-sync: ' + (s.api.auto ? 'ON' : 'OFF'); ba.classList.toggle('on', s.api.auto);
@@ -1032,7 +1132,8 @@ if(IS_CONTROL){
     document.body.style.transform = k < 0.999 ? `translate(${((innerWidth-1920*k)/2).toFixed(1)}px,${((innerHeight-1080*k)/2).toFixed(1)}px) scale(${k})` : '';
   };
   fitView(); window.addEventListener('resize', fitView);
-  document.body.insertAdjacentHTML('beforeend', '<div id="ov"></div>');
+  document.body.insertAdjacentHTML('beforeend', '<div id="ov"></div><div id="sndchip" class="sndchip" style="display:none">🔊 Sound chalu karne ke liye yahan ek baar click karein</div>');
+  ['pointerdown','keydown'].forEach(ev => window.addEventListener(ev, sndUnlock));
   renderOverlay(); sceneSync(S);
   // safety net: poll storage every second (in case events are missed)
   setInterval(() => { const d = load(); if(d) onRemote(d); }, 1000);

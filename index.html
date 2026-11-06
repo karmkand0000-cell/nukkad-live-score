@@ -342,35 +342,65 @@ function sndInit(){
   SND.master = ctx.createGain(); SND.master.connect(ctx.destination);
   const len = ctx.sampleRate*2, buf = ctx.createBuffer(1, len, ctx.sampleRate), d = buf.getChannelData(0);
   for(let i=0;i<len;i++) d[i] = Math.random()*2-1;
-  SND.noise = buf; sndApply(S); return ctx;
+  SND.noise = buf; sndBuild(); sndApply(S); return ctx;
 }
 function sndReady(){ return !IN_FRAME && S.sound !== false && SND.ctx && SND.ctx.state === 'running'; }
 function nSrc(){ const n = SND.ctx.createBufferSource(); n.buffer = SND.noise; n.loop = true; n.loopStart = Math.random(); return n; }
 function env(g, t, a, peak, hold, rel){ g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(peak, t+a);
   g.gain.setValueAtTime(peak, t+a+hold); g.gain.exponentialRampToValueAtTime(0.0001, t+a+hold+rel); }
-function batCrack(vol){
+function batCrack(vol){            // wooden "tock": two short knock tones + a tiny click
   const c = SND.ctx, t = c.currentTime;
-  const n = nSrc(), bp = c.createBiquadFilter(), g = c.createGain();
-  bp.type = 'bandpass'; bp.frequency.value = 2400; bp.Q.value = 1.4;
-  n.connect(bp); bp.connect(g); g.connect(SND.master); env(g, t, 0.002, 0.9*vol, 0.01, 0.07); n.start(t); n.stop(t+0.12);
-  const o = c.createOscillator(), og = c.createGain(); o.type = 'triangle';
-  o.frequency.setValueAtTime(1100, t); o.frequency.exponentialRampToValueAtTime(380, t+0.06);
-  o.connect(og); og.connect(SND.master); env(og, t, 0.002, 0.6*vol, 0.005, 0.08); o.start(t); o.stop(t+0.12);
-}
-function crowd(dur, peak){
-  const c = SND.ctx, t = c.currentTime + 0.05;
-  [[700,0.5,1],[1500,0.8,0.55],[320,0.7,0.6]].forEach(([f,q,k]) => {
-    const n = nSrc(), bp = c.createBiquadFilter(), g = c.createGain();
-    bp.type = 'bandpass'; bp.frequency.value = f; bp.Q.value = q;
-    n.connect(bp); bp.connect(g); g.connect(SND.master);
-    env(g, t, 0.35, peak*k, dur*0.45, dur*0.55); n.start(t); n.stop(t+dur+0.3);
+  [[1450,0.035,0.55],[820,0.05,0.45],[2900,0.015,0.2]].forEach(([f,d,k]) => {
+    const o = c.createOscillator(), g = c.createGain(); o.type = 'sine'; o.frequency.value = f;
+    o.connect(g); g.connect(SND.master); env(g, t, 0.001, k*vol, 0.002, d); o.start(t); o.stop(t+d+0.05);
   });
-  const whoops = Math.round(peak*6);                       // a few "whoo" whistles
-  for(let i=0;i<whoops;i++){
-    const o = c.createOscillator(), g = c.createGain(), st = t + 0.2 + Math.random()*dur*0.5, f = 1300 + Math.random()*900;
-    o.type = 'sine'; o.frequency.setValueAtTime(f*0.8, st); o.frequency.linearRampToValueAtTime(f, st+0.25); o.frequency.linearRampToValueAtTime(f*0.9, st+0.7);
-    o.connect(g); g.connect(SND.master); env(g, st, 0.08, 0.05*peak, 0.3, 0.35); o.start(st); o.stop(st+0.9);
+  const n = nSrc(), hp = c.createBiquadFilter(), g = c.createGain(); hp.type = 'highpass'; hp.frequency.value = 3000;
+  n.connect(hp); hp.connect(g); g.connect(SND.master); env(g, t, 0.001, 0.35*vol, 0.002, 0.012); n.start(t); n.stop(t+0.05);
+}
+/* Pre-rendered crowd beds: applause = hundreds of tiny random claps; roar = many detuned "aah" voices */
+const BED = 6;
+function sndBuild(){
+  const c = SND.ctx, sr = c.sampleRate;
+  const ap = c.createBuffer(2, sr*BED, sr);
+  for(let ch=0; ch<2; ch++){
+    const d = ap.getChannelData(ch), total = 240*BED;
+    for(let k=0;k<total;k++){
+      const st = Math.floor(Math.random()*sr*BED), tau = (0.003 + Math.random()*0.007)*sr, amp = 0.2 + Math.random()*0.8, len = Math.floor(tau*5);
+      for(let i=0;i<len && st+i<d.length;i++) d[st+i] += amp*(Math.random()*2-1)*Math.exp(-i/tau);
+    }
+    let m = 0; for(let i=0;i<d.length;i++) m = Math.max(m, Math.abs(d[i])); for(let i=0;i<d.length;i++) d[i] /= (m||1);
   }
+  SND.applause = ap;
+  const oc = new OfflineAudioContext(2, sr*BED, sr), sum = oc.createGain(); sum.gain.value = 1;
+  const forms = [[700,4,1],[1150,5,0.55],[2600,6,0.2]].map(([f,q,k]) => { const bp = oc.createBiquadFilter(), g = oc.createGain();
+    bp.type = 'bandpass'; bp.frequency.value = f; bp.Q.value = q; g.gain.value = k; sum.connect(bp); bp.connect(g); g.connect(oc.destination); return bp; });
+  const V = 36;
+  for(let i=0;i<V;i++){
+    const o = oc.createOscillator(), g = oc.createGain(), pan = oc.createStereoPanner(), lfo = oc.createOscillator(), lg = oc.createGain(), am = oc.createOscillator(), amg = oc.createGain();
+    o.type = 'sawtooth'; o.frequency.value = 110 + Math.random()*240;
+    lfo.frequency.value = 4 + Math.random()*3; lg.gain.value = 3 + Math.random()*5; lfo.connect(lg); lg.connect(o.frequency);
+    am.frequency.value = 0.4 + Math.random()*1.2; amg.gain.value = 0.35/V; am.connect(amg); amg.connect(g.gain); g.gain.value = 0.55/V;
+    pan.pan.value = Math.random()*1.6 - 0.8; o.connect(g); g.connect(pan); pan.connect(sum);
+    const st = Math.random()*0.3; [o,lfo,am].forEach(x => x.start(st));
+  }
+  const nb = oc.createBuffer(1, sr*BED, sr), nd = nb.getChannelData(0); for(let i=0;i<nd.length;i++) nd[i] = Math.random()*2-1;
+  const ns = oc.createBufferSource(), ng = oc.createGain(); ns.buffer = nb; ng.gain.value = 0.25; ns.connect(ng); ng.connect(sum); ns.start();
+  oc.startRendering().then(buf => {
+    for(let ch=0; ch<2; ch++){ const d = buf.getChannelData(ch); let m = 0; for(let i=0;i<d.length;i++) m = Math.max(m, Math.abs(d[i])); for(let i=0;i<d.length;i++) d[i] /= (m||1); }
+    SND.roar = buf; sndApply(S);
+  });
+}
+function bedPlay(buf, dur, peak, filt){
+  if(!buf || peak <= 0) return;
+  const c = SND.ctx, t = c.currentTime + 0.03, src = c.createBufferSource(), g = c.createGain();
+  src.buffer = buf; src.loop = true; src.playbackRate.value = 0.95 + Math.random()*0.1;
+  let node = src; if(filt){ const f = c.createBiquadFilter(); f.type = filt[0]; f.frequency.value = filt[1]; f.Q.value = filt[2]||0.7; src.connect(f); node = f; }
+  node.connect(g); g.connect(SND.master);
+  env(g, t, 0.25, peak, dur*0.35, dur*0.65); src.start(t, Math.random()*(BED-1)); src.stop(t + dur + 0.4);
+}
+function crowd(dur, roar, clap){
+  bedPlay(SND.roar, dur, roar, ['lowpass', 3200]);
+  bedPlay(SND.applause, dur*0.9, clap, ['bandpass', 1900, 0.5]);
 }
 function stumpsHit(vol){
   const c = SND.ctx, t = c.currentTime;
@@ -385,20 +415,20 @@ function stumpsHit(vol){
 }
 function sfx(o){
   if(!sndReady()) return;
-  if(o === 'six'){ batCrack(1.2); crowd(4.2, 0.9); }
-  else if(o === 'four'){ batCrack(1); crowd(3.2, 0.7); }
-  else if(o === 'wicket'){ stumpsHit(1); setTimeout(() => sndReady() && crowd(3.6, 0.85), 180); }
-  else if(o === 'run'){ batCrack(0.8); crowd(1.6, 0.25); }
+  if(o === 'six'){ batCrack(1.2); crowd(4.5, 0.85, 0.75); }
+  else if(o === 'four'){ batCrack(1); crowd(3.5, 0.6, 0.65); }
+  else if(o === 'wicket'){ stumpsHit(1); setTimeout(() => sndReady() && crowd(3.8, 0.8, 0.45), 150); }
+  else if(o === 'run'){ batCrack(0.8); crowd(1.8, 0, 0.25); }
   else if(o === 'dot'){ batCrack(0.55); }
 }
 function sndApply(s){
   if(!SND.ctx) return;
   SND.master.gain.value = Math.max(0, Math.min(1, (s.volume ?? 80)/100));
   const want = !IN_FRAME && s.sound !== false && !!s.ambience;
-  if(want && !SND.amb){
-    const c = SND.ctx, n = nSrc(), bp = c.createBiquadFilter(), g = c.createGain();
-    bp.type = 'bandpass'; bp.frequency.value = 500; bp.Q.value = 0.4; g.gain.value = 0.0001;
-    n.connect(bp); bp.connect(g); g.connect(SND.master); n.start(); g.gain.linearRampToValueAtTime(0.06, c.currentTime + 1.5);
+  if(want && !SND.amb && SND.roar){
+    const c = SND.ctx, n = c.createBufferSource(), lp = c.createBiquadFilter(), g = c.createGain();
+    n.buffer = SND.roar; n.loop = true; lp.type = 'lowpass'; lp.frequency.value = 900; g.gain.value = 0.0001;
+    n.connect(lp); lp.connect(g); g.connect(SND.master); n.start(); g.gain.linearRampToValueAtTime(0.12, c.currentTime + 1.5);
     SND.amb = n; SND.ambG = g;
   } else if(!want && SND.amb){
     const c = SND.ctx, n = SND.amb; SND.ambG.gain.linearRampToValueAtTime(0.0001, c.currentTime + 0.6); n.stop(c.currentTime + 0.7); SND.amb = null;
